@@ -167,77 +167,96 @@ def count_unique_and_duplicate_user_phrases(data):
 
 from collections import defaultdict
 
-def get_word_review_days(dev_key_id, dev_data, train_data, key):
-    timeline = []
-    found_flag = False
-    target_user = None
-    target_day = None
-    target_word = None
+def get_all_word_review_days(dev_data, train_data, key):
+    # Structure to store results
+    results_by_word = defaultdict(dict)  # word -> dev_id -> result dict
 
-    # Step 1: Identify target user, word, and day from dev_key_id
+    # Prebuild a mapping from dev_id to (user, word, phrase, day)
+    dev_id_map = {}
     for user_id, user_info in dev_data.items():
         for phrase, phrase_events in user_info["phrases"].items():
             for event in phrase_events:
+                session_day = event["session_data"]["days"]
                 for word, instances in event["words"].items():
                     for instance in instances:
-                        if instance["line_id"] == dev_key_id:
-                            target_user = user_id
-                            target_day = event["session_data"]["days"]
-                            target_word = word
-                            found_flag = True
-                            break
-                    if found_flag:
-                        break
-                if found_flag:
-                    break
-            if found_flag:
-                break
-        if found_flag:
-            break
+                        line_id = instance["line_id"]
+                        dev_id_map[line_id] = {
+                            "user": user_id,
+                            "word": word,
+                            "phrase": phrase,
+                            "day": session_day,
+                            "event": event,
+                        }
 
-    if not found_flag:
-        print(f"Dev ID {dev_key_id} not found.")
-        return None
+    # For each dev_id in key, compute retention info
+    for dev_id in key.keys():
+        if dev_id not in dev_id_map:
+            print(f"Dev ID {dev_id} not found in dev data.")
+            continue
 
-    # Step 2: Collect previous DEV events for same user-word pair
-    for phrase, phrase_events in dev_data[target_user]["phrases"].items():
-        for event in phrase_events:
-            for word, instances in event["words"].items():
-                if word == target_word:
-                    for instance in instances:
-                        if instance["line_id"] < dev_key_id:
-                            timeline.append((event["session_data"]["days"], instance["line_id"], "dev"))
+        info = dev_id_map[dev_id]
+        target_user = info["user"]
+        target_word = info["word"]
+        target_phrase = info["phrase"]
+        target_day = info["day"]
 
-    # Step 3: Collect TRAIN events for same user-word pair
-    if target_user in train_data:
-        for phrase, phrase_events in train_data[target_user]["phrases"].items():
+        # Collect dev days before current dev_id
+        dev_days = []
+        early_dev_flag = True
+        for phrase, phrase_events in dev_data[target_user]["phrases"].items():
             for event in phrase_events:
+                if not early_dev_flag:
+                    break
                 for word, instances in event["words"].items():
-                    if word == target_word:
-                        for instance in instances:
-                            timeline.append((event["session_data"]["days"], instance["line_id"], "train"))
+                    for instance in instances:
+                        if instance["line_id"] == dev_id:
+                            early_dev_flag = False
+                            break
+                        if word == target_word:
+                            dev_days.append(event["session_data"]["days"])
+                    if not early_dev_flag:
+                        break
+                if not early_dev_flag:
+                    break
+            if not early_dev_flag:
+                break
 
-    # Step 4: Add the current dev_id event to the end
-    timeline.append((target_day, dev_key_id, "target"))
+        # Collect all train days for the target user-word
+        train_days = []
+        if target_user in train_data:
+            for phrase, phrase_events in train_data[target_user]["phrases"].items():
+                for event in phrase_events:
+                    for word, instances in event["words"].items():
+                        if word == target_word:
+                            train_days.extend([event["session_data"]["days"]] * len(instances))
 
-    # Step 5: Sort by (day, line_id)
-    timeline.sort(key=lambda x: (x[0], x[1]))
+        # Combine train days and dev days before current, plus current day
+        combined_days = train_days + dev_days + [target_day]
+        combined_days = sorted(combined_days)
 
-    # Step 6: Extract days and calculate intervals
-    ordered_days = [entry[0] for entry in timeline]
-    intervals = [round(ordered_days[i+1] - ordered_days[i], 2) for i in range(len(ordered_days) - 1)]
+        # Calculate intervals
+        intervals = []
+        for i in range(len(combined_days) - 1):
+            diff = round(combined_days[i+1] - combined_days[i], 2)
+            intervals.append(diff)
 
-    # Final result
-    result = {
-        "user": target_user,
-        "word": target_word,
-        "dev_day_for_id": target_day,
-        "ordered_days": ordered_days,
-        "intervals": intervals,
-        "retention": key[str(dev_key_id)]
-    }
+        # Prepare result dict
+        result = {
+            "user": target_user,
+            "word": target_word,
+            "dev_day_for_id": target_day,
+            "dev_days_before_id": sorted(dev_days),
+            "train_days": sorted(train_days),
+            "combined_days": combined_days,
+            "interval": intervals,
+            "retention": key.get(dev_id, None),
+        }
 
-    return result
+        # Store result keyed by word and dev_id
+        results_by_word[target_word][dev_id] = result
+
+    return results_by_word
+
 
 
 
@@ -269,40 +288,34 @@ def theExperiment(train, dev,minRecalls, maxRecalls):
 train=parse_file("EnglishTrain.txt")
 dev=parse_file("EnglishDev.txt")
 theExperiment(train,dev,0,0)
-n=0
-d=0
-for i in key.values():
-    if int(i)==0:
-        n+=1
-        d+=1
-    else:
-        d+=1
-print(n/d,n,d)
-#print(len(key.values()))
-doop=0
-#print(dev["0hfSZZPH"]["phrases"]["i have a radio and a computer"])
-for users in dev.keys():
-        for phrase in dev[str(users)]["phrases"].keys():
-            for i in range (len((dev[str(users)]["phrases"][str(phrase)]))):
-                doop+=len(phrase.split())
+
                 
-#print("doop",doop)
 
-empty_word_entries = 0
-for users in dev.keys():
-    for phrase in dev[str(users)]["phrases"].keys():
-        for i in range (len(dev[str(users)]["phrases"][str(phrase)])):
-            #print(dev[str(users)]["phrases"][str(phrase)][i]["words"])
-            break
-num=0
-dem=0
-for i in key.keys():
-    ret = get_word_review_days(str(i), dev, train, key)
-    if int(ret["retention"])==0:
-        num+=1
-        dem+=1
-    else:
-        dem+=1
-print(num/dem,num,dem)
+results = get_all_word_review_days(dev, train, key)
 
+#word = "books"
+#dev_id = "7DRdO0Iq0404"  # 
+#if word in results and dev_id in results[word]:
+    #print(results[word][dev_id])
+
+
+def analyze_retention_accuracy(results_by_word):
+    num = 0
+    dem = 0
+
+    for word, dev_results in results_by_word.items():
+        for dev_id, result in dev_results.items():
+            retention_val = result.get("retention")
+            if retention_val is None:
+                continue  # skip if no retention info
+
+            if int(retention_val) == 0:
+                num += 1
+            dem += 1
+
+    accuracy = num / dem if dem > 0 else 0
+    return accuracy, num, dem
+
+accuracy, num_correct, total = analyze_retention_accuracy(results)
+print(f"Accuracy: {accuracy:.4f} ({num_correct} out of {total})")
 
