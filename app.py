@@ -237,7 +237,7 @@ def get_all_word_review_days(dev_data, train_data, key):
         # Calculate intervals
         intervals = []
         for i in range(len(combined_days) - 1):
-            diff = round(combined_days[i+1] - combined_days[i], 2)
+            diff = round(combined_days[i+1] - combined_days[i], 1)
             intervals.append(diff)
 
         # Prepare result dict
@@ -287,35 +287,60 @@ def theExperiment(train, dev,minRecalls, maxRecalls):
 
 train=parse_file("EnglishTrain.txt")
 dev=parse_file("EnglishDev.txt")
-theExperiment(train,dev,0,0)
+#theExperiment(train,dev,0,0)
 
                 
 
 results = get_all_word_review_days(dev, train, key)
 
-#word = "books"
-#dev_id = "7DRdO0Iq0404"  # 
+word = "month"
+dev_id = "XdnK6VvX0604"  # 
 #if word in results and dev_id in results[word]:
     #print(results[word][dev_id])
+print(dev["CpHmTf0y"]["phrases"]["august is a month of the year"])
+
 
 
 def analyze_retention_accuracy(results_by_word):
-    num = 0
-    dem = 0
+    rundict = defaultdict(lambda: [0, 0, []])  # [correct count, total count, list of dev_ids]
 
     for word, dev_results in results_by_word.items():
         for dev_id, result in dev_results.items():
+            interval = result.get("interval")
+            interval=tuple(interval)
             retention_val = result.get("retention")
-            if retention_val is None:
-                continue  # skip if no retention info
+            
 
-            if int(retention_val) == 0:
-                num += 1
-            dem += 1
+            if interval is None or retention_val is None:
+                continue
 
-    accuracy = num / dem if dem > 0 else 0
-    return accuracy, num, dem
+            retention_val = int(retention_val)
 
-accuracy, num_correct, total = analyze_retention_accuracy(results)
-print(f"Accuracy: {accuracy:.4f} ({num_correct} out of {total})")
+            rundict[interval][1] += 1  # total count
+            if retention_val == 0:
+                rundict[interval][0] += 1  # correct count
+
+            rundict[interval][2].append(dev_id)  # store line ID
+
+    # Now convert to accuracy tuples
+    for k in rundict:
+        correct, total, dev_ids = rundict[k]
+        acc = 100 * correct / total if total > 0 else 0
+        rundict[k] = (acc, total, dev_ids)
+
+    return rundict
+
+
+dicdic = analyze_retention_accuracy(results)
+
+# Sort by number of attempts (most first)
+sorted_dic = sorted(dicdic.items(), key=lambda item: item[1][1], reverse=True)
+
+#with open("output.txt", "w") as f:
+    #for interval, (accuracy, count, dev_ids) in sorted_dic:
+        #if accuracy < 100:
+            #f.write(f"Interval: {interval}, Accuracy: {accuracy:.2f}, Count: {count}, LineIDs: {sorted(dev_ids)}\n")
+
+
+
 
